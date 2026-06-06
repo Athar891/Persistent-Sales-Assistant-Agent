@@ -30,8 +30,8 @@ class Settings(BaseSettings):
     # --- LLM (Anthropic) ---
     anthropic_api_key: str | None = None
     agent_model: str = "claude-sonnet-4-6"
-    eval_model: str = "claude-haiku-4-5-20251001"
-    summarizer_model: str = "claude-haiku-4-5-20251001"
+    eval_model: str = "claude-haiku-4-5"
+    summarizer_model: str = "claude-haiku-4-5"
     agent_max_tokens: int = 1024
     eval_max_tokens: int = 512
     summarizer_max_tokens: int = 512
