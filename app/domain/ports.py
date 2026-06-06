@@ -9,7 +9,15 @@ swappable in one file.
 
 from typing import Protocol
 
-from app.domain.types import ConvMessage, LLMReply, ReviewEntry, SummaryState, ToolSpec, Turn
+from app.domain.types import (
+    ConvMessage,
+    EvalAggregate,
+    LLMReply,
+    ReviewEntry,
+    SummaryState,
+    ToolSpec,
+    Turn,
+)
 from app.models.catalog import Plan
 from app.models.eval import EvalBlock
 
@@ -93,6 +101,17 @@ class ReviewLogPort(Protocol):
     async def list_entries(
         self, *, user_id: str | None = None, only_unresolved: bool = False, limit: int = 100
     ) -> list[ReviewEntry]: ...
+
+
+class EvalStorePort(Protocol):
+    """Persists every self-evaluation and answers the aggregation query."""
+
+    async def record(
+        self, *, message_id: int, user_id: str, session_id: str, evaluation: EvalBlock
+    ) -> None: ...
+
+    async def aggregate(self, user_id: str, *, high_confidence_threshold: float) -> EvalAggregate:
+        ...
 
 
 class NotifierPort(Protocol):

@@ -25,10 +25,12 @@ class NullNotifier:
         logger.warning(
             "flagged_for_human",
             extra={
-                "event": "flagged_for_human",
-                "user_id": user_id,
-                "session_id": session_id,
-                "confidence": confidence,
-                "reason": reason,
+                "json_fields": {
+                    "event": "flagged_for_human",
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "confidence": confidence,
+                    "reason": reason,
+                }
             },
         )

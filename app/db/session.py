@@ -5,7 +5,6 @@ storage engine is chosen. Swapping SQLite for Postgres is a URL change, not a
 code change — ``normalize_database_url`` makes both speak async SQLAlchemy.
 """
 
-from collections.abc import AsyncIterator
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy.ext.asyncio import (
@@ -64,13 +63,3 @@ class Database:
 
     async def dispose(self) -> None:
         await self.engine.dispose()
-
-    async def session(self) -> AsyncIterator[AsyncSession]:
-        """Yield a session; commit on success, roll back on error."""
-        async with self.sessionmaker() as session:
-            try:
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise

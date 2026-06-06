@@ -34,6 +34,19 @@ class SummaryState:
 
 
 @dataclass(frozen=True)
+class EvalAggregate:
+    """Aggregated eval stats for a user (powers GET /chat/{user_id}/evals)."""
+
+    total: int
+    flagged: int
+    high_confidence: int
+    high_confidence_pct: float
+    avg_groundedness: float
+    avg_relevance: float
+    avg_confidence: float
+
+
+@dataclass(frozen=True)
 class ReviewEntry:
     """A human-review-log row, as the review store hands it back."""
 
