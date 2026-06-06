@@ -1,8 +1,8 @@
 """baseline schema
 
-Revision ID: 7c1d6df25e4f
+Revision ID: d1aa2cd2773b
 Revises: 
-Create Date: 2026-06-06 22:18:13.103318
+Create Date: 2026-06-06 22:39:50.864906
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '7c1d6df25e4f'
+revision: str = 'd1aa2cd2773b'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -65,9 +65,9 @@ def upgrade() -> None:
     sa.Column('session_id', sa.String(length=36), nullable=False),
     sa.Column('message_id', sa.Integer(), nullable=True),
     sa.Column('reason', sa.Text(), nullable=False),
-    sa.Column('groundedness', sa.Float(), nullable=False),
-    sa.Column('relevance', sa.Float(), nullable=False),
-    sa.Column('confidence', sa.Float(), nullable=False),
+    sa.Column('groundedness', sa.Float(), nullable=True),
+    sa.Column('relevance', sa.Float(), nullable=True),
+    sa.Column('confidence', sa.Float(), nullable=True),
     sa.Column('resolved', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['message_id'], ['messages.id'], ondelete='SET NULL'),

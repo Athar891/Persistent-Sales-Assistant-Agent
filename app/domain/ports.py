@@ -9,7 +9,7 @@ swappable in one file.
 
 from typing import Protocol
 
-from app.domain.types import ConvMessage, LLMReply, SummaryState, ToolSpec, Turn
+from app.domain.types import ConvMessage, LLMReply, ReviewEntry, SummaryState, ToolSpec, Turn
 from app.models.catalog import Plan
 from app.models.eval import EvalBlock
 
@@ -77,9 +77,27 @@ class EvaluatorPort(Protocol):
     ) -> EvalBlock: ...
 
 
+class ReviewLogPort(Protocol):
+    """Persistent log of responses escalated for human review."""
+
+    async def record(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        reason: str,
+        evaluation: EvalBlock | None = None,
+        message_id: int | None = None,
+    ) -> None: ...
+
+    async def list_entries(
+        self, *, user_id: str | None = None, only_unresolved: bool = False, limit: int = 100
+    ) -> list[ReviewEntry]: ...
+
+
 class NotifierPort(Protocol):
     """Escalation sink for flagged responses (logging now; pager/Slack at scale)."""
 
     async def notify(
-        self, *, user_id: str, session_id: str, reason: str, evaluation: EvalBlock
+        self, *, user_id: str, session_id: str, reason: str, evaluation: EvalBlock | None = None
     ) -> None: ...

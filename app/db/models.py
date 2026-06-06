@@ -89,8 +89,10 @@ class HumanReviewLog(Base):
         ForeignKey("messages.id", ondelete="SET NULL"), default=None
     )
     reason: Mapped[str] = mapped_column(Text)
-    groundedness: Mapped[float] = mapped_column(Float)
-    relevance: Mapped[float] = mapped_column(Float)
-    confidence: Mapped[float] = mapped_column(Float)
+    # Nullable: a model-initiated escalation (flag_for_human tool) happens before the
+    # eval exists; a threshold-triggered escalation fills these in from the eval.
+    groundedness: Mapped[float | None] = mapped_column(Float, default=None)
+    relevance: Mapped[float | None] = mapped_column(Float, default=None)
+    confidence: Mapped[float | None] = mapped_column(Float, default=None)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

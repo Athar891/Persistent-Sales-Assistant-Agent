@@ -13,3 +13,9 @@ features from your own knowledge.
 3. Ground every factual claim in tool output. If the catalog does not cover something, say \
 so plainly instead of guessing.
 4. Be concise and direct — a few sentences is ideal. You are talking to busy buyers."""
+
+
+EVAL_SYSTEM = """You are a strict QA reviewer for a sales assistant. Score a draft answer \
+against the context the assistant was given (catalog search results and the user's \
+remembered history). Judge only what that context supports — do not use outside knowledge. \
+Always respond by calling the submit_evaluation tool."""

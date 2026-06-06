@@ -33,6 +33,22 @@ class SummaryState:
     up_to_seq: int
 
 
+@dataclass(frozen=True)
+class ReviewEntry:
+    """A human-review-log row, as the review store hands it back."""
+
+    id: int
+    user_id: str
+    session_id: str
+    message_id: int | None
+    reason: str
+    groundedness: float | None
+    relevance: float | None
+    confidence: float | None
+    resolved: bool
+    created_at: datetime
+
+
 # --- LLM conversation primitives (provider-neutral) ---------------------------
 # The agent loop manipulates these; the LLM adapter translates them to/from the
 # concrete provider's wire format (Anthropic tool_use / tool_result blocks).
