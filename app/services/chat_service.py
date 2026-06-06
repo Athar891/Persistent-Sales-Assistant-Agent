@@ -21,11 +21,16 @@ from app.domain.ports import (
     NotifierPort,
     ReviewLogPort,
 )
+from app.logging_config import get_logger
+from app.memory.summarizer import Summarizer
 from app.models.chat import ChatData, ChatHistory, HistoryTurn, MemoryWipeResult
+from app.models.eval import EvalSummary
 from app.settings import Settings
 from app.tools.flag_for_human import FlagForHumanTool
 from app.tools.get_user_memory import GetUserMemoryTool
 from app.tools.search_catalog import SearchCatalogTool
+
+logger = get_logger("sales_agent.chat")
 
 
 class ChatService:
@@ -49,6 +54,13 @@ class ChatService:
         self._reviews = reviews
         self._notifier = notifier
         self._settings = settings
+        self._summarizer = Summarizer(
+            llm,
+            model=settings.summarizer_model,
+            max_tokens=settings.summarizer_max_tokens,
+            recent_window=settings.recent_turns_window,
+            summarize_after=settings.summarize_after_turns,
+        )
 
     async def handle(self, *, user_id: str, message: str, session_id: str | None) -> ChatData:
         session_id = session_id or str(uuid4())
@@ -113,11 +125,35 @@ class ChatService:
                 message_id=assistant_turn.seq,
             )
 
+        # 6. Best-effort rolling summarization once history grows past the window.
+        await self._maybe_summarize(user_id)
+
         return ChatData(
             response=outcome.answer,
             eval=evaluation,
             tools_called=outcome.tools_called,
             session_id=session_id,
+        )
+
+    async def _maybe_summarize(self, user_id: str) -> None:
+        try:
+            await self._summarizer.run(self._memory, user_id)
+        except Exception:  # best-effort: a summary failure must not fail the turn
+            logger.warning("summarization_failed", extra={"json_fields": {"user_id": user_id}})
+
+    async def evals_summary(self, user_id: str) -> EvalSummary:
+        agg = await self._evals.aggregate(
+            user_id, high_confidence_threshold=self._settings.flag_confidence_threshold
+        )
+        return EvalSummary(
+            user_id=user_id,
+            total_responses=agg.total,
+            high_confidence=agg.high_confidence,
+            high_confidence_pct=agg.high_confidence_pct,
+            flagged=agg.flagged,
+            avg_groundedness=agg.avg_groundedness,
+            avg_relevance=agg.avg_relevance,
+            avg_confidence=agg.avg_confidence,
         )
 
     async def history(self, user_id: str) -> ChatHistory:

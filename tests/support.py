@@ -100,6 +100,9 @@ class StubLLM:
                 "tool_use",
             )
 
+        if not tools:  # summarizer call (no tools) — return a text summary
+            return final_text("Rolling summary: the user is comparing plans (Enterprise, SSO).")
+
         requested = {p.name for m in messages for p in m.parts if isinstance(p, ToolUsePart)}
         if "get_user_memory" not in requested:
             return tool_use("m1", "get_user_memory", {})

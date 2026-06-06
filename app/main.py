@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api import errors, middleware
-from app.api.routes import catalog, chat, health
+from app.api.routes import catalog, chat, health, reviews
 from app.catalog.keyword_search import KeywordCatalogSearch
 from app.db.session import Database
 from app.llm.anthropic_client import AnthropicClient
@@ -41,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(catalog.router)
     app.include_router(chat.router)
+    app.include_router(reviews.router)
     return app
 
 

@@ -6,6 +6,7 @@ from app.api.deps import ChatServiceDep
 from app.api.responses import build_meta
 from app.models.chat import ChatData, ChatHistory, ChatRequest, MemoryWipeResult
 from app.models.envelope import Envelope
+from app.models.eval import EvalSummary
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -27,6 +28,15 @@ async def history(
     user_id: str, request: Request, service: ChatServiceDep
 ) -> Envelope[ChatHistory]:
     return Envelope[ChatHistory](data=await service.history(user_id), meta=build_meta(request))
+
+
+@router.get("/{user_id}/evals", response_model=Envelope[EvalSummary])
+async def evals(
+    user_id: str, request: Request, service: ChatServiceDep
+) -> Envelope[EvalSummary]:
+    return Envelope[EvalSummary](
+        data=await service.evals_summary(user_id), meta=build_meta(request)
+    )
 
 
 @router.delete("/{user_id}/memory", response_model=Envelope[MemoryWipeResult])

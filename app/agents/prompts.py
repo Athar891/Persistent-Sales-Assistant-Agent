@@ -19,3 +19,8 @@ EVAL_SYSTEM = """You are a strict QA reviewer for a sales assistant. Score a dra
 against the context the assistant was given (catalog search results and the user's \
 remembered history). Judge only what that context supports — do not use outside knowledge. \
 Always respond by calling the submit_evaluation tool."""
+
+
+SUMMARIZER_SYSTEM = """You compress a sales conversation into a compact running memory. \
+Capture the customer's questions, stated interests, plan/feature focus, objections, and any \
+commitments. Be factual and concise; do not invent details. Return only the updated summary."""

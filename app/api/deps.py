@@ -12,7 +12,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import Database
-from app.domain.ports import CatalogPort, LLMPort, NotifierPort
+from app.domain.ports import CatalogPort, LLMPort, NotifierPort, ReviewLogPort
 from app.evals.sql_eval_store import SqlEvalStore
 from app.memory.sql_store import SqlMemoryStore
 from app.reviews.sql_review_log import SqlReviewLog
@@ -59,6 +59,13 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CatalogDep = Annotated[CatalogPort, Depends(get_catalog)]
 LLMDep = Annotated[LLMPort, Depends(get_llm)]
 NotifierDep = Annotated[NotifierPort, Depends(get_notifier)]
+
+
+def get_review_log(session: SessionDep) -> ReviewLogPort:
+    return SqlReviewLog(session)
+
+
+ReviewLogDep = Annotated[ReviewLogPort, Depends(get_review_log)]
 
 
 def get_chat_service(
