@@ -5,6 +5,7 @@ Welcome! This is a smart AI agent designed for sales teams. Think of it as a hig
 Unlike simple chatbots that forget what you said as soon as you close the page or refresh your browser, this agent **remembers your past conversations**. It uses a real database to store chat histories, so if a customer asks a question on Monday and follows up on Friday, the AI will remember exactly what they were talking about!
 
 - **Live Demo URL:** `https://sales-agent-production-c77f.up.railway.app`
+- **Video Walkthrough:** [Watch the demo on Loom](https://www.loom.com/share/2ca8c40c70da45418dc676a5fe721299)
 - **What it does:** Answers questions about pricing and product features based on your company's official catalog.
 
 ---
