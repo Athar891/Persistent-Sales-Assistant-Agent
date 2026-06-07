@@ -63,9 +63,11 @@ class StubLLM:
         *,
         confidence: float = 0.9,
         answer: str = "Our Enterprise plan is $499/mo and includes SSO and audit logs.",
+        eval_structured: bool = True,
     ) -> None:
         self.confidence = confidence
         self.answer = answer
+        self.eval_structured = eval_structured  # False → evaluator returns no structured score
         self.calls: list[dict[str, Any]] = []
 
     async def create_message(
@@ -81,6 +83,8 @@ class StubLLM:
         self.calls.append({"system": system, "messages": list(messages), "force_tool": force_tool})
 
         if force_tool == "submit_evaluation":
+            if not self.eval_structured:
+                return final_text("Looks fine to me.")  # no tool call → evaluator degrades
             return LLMReply(
                 ConvMessage(
                     "assistant",

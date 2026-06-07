@@ -34,3 +34,17 @@ async def test_reviews_endpoint_lists_and_filters(harness: Harness) -> None:
 
     empty = (await harness.client.get("/reviews", params={"user_id": "nobody"})).json()["data"]
     assert empty["count"] == 0
+
+
+async def test_degraded_eval_is_flagged_for_review_but_not_aggregated(harness: Harness) -> None:
+    harness.llm.eval_structured = False  # the evaluator returns no structured score
+    r = await harness.client.post("/chat/acme", json={"message": "hi"})
+    assert r.json()["data"]["eval"]["flagged"] is True  # response still carries a flagged eval
+
+    # The degraded eval is kept out of the aggregate (its placeholder zeros would skew it)...
+    evals = (await harness.client.get("/chat/acme/evals")).json()["data"]
+    assert evals["total_responses"] == 0
+    # ...but it was escalated to the human-review queue.
+    reviews = (await harness.client.get("/reviews")).json()["data"]
+    assert reviews["count"] == 1
+    assert "structured score" in reviews["entries"][0]["reason"]

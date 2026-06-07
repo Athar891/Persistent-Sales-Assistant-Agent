@@ -111,5 +111,8 @@ Set these environment variables on your host (e.g. Railway):
 | `API_KEY=<a long random secret>` | Required in production — gates `/chat` and `/reviews`. |
 | `DATABASE_URL=postgresql://…` | Required in production — Railway's Postgres plugin injects this. SQLite is ephemeral and would lose all memory on redeploy. |
 | `ANTHROPIC_API_KEY=<your key>` | So the agent can reach Claude. |
+| `CORS_ALLOW_ORIGINS=` | Optional. Comma-separated browser origins (e.g. a chat-widget host). Leave empty for server-to-server only. |
 
 With `ENVIRONMENT=production` set, the app **refuses to boot** if `API_KEY` is missing or `DATABASE_URL` still points at SQLite — so an insecure config fails loudly instead of silently.
+
+> **Scaling note:** migrations run on boot (`start.sh`), which assumes a **single instance**. Before scaling past one replica, move `alembic upgrade head` to a one-off release step so concurrent boots don't race on it.

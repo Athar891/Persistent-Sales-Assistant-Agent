@@ -1,6 +1,8 @@
 """Chat endpoints. Handlers stay dumb: parse, delegate to ChatService, serialize."""
 
-from fastapi import APIRouter, Depends, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, Request
 
 from app.api.deps import ChatServiceDep
 from app.api.responses import build_meta
@@ -11,10 +13,13 @@ from app.models.eval import EvalSummary
 
 router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(require_api_key)])
 
+# Bound the path id: non-empty and within the DB column width (messages.user_id is 255).
+UserId = Annotated[str, Path(min_length=1, max_length=255)]
+
 
 @router.post("/{user_id}", response_model=Envelope[ChatData])
 async def chat(
-    user_id: str, body: ChatRequest, request: Request, service: ChatServiceDep
+    user_id: UserId, body: ChatRequest, request: Request, service: ChatServiceDep
 ) -> Envelope[ChatData]:
     data = await service.handle(
         user_id=user_id, message=body.message, session_id=body.session_id
@@ -26,14 +31,14 @@ async def chat(
 
 @router.get("/{user_id}/history", response_model=Envelope[ChatHistory])
 async def history(
-    user_id: str, request: Request, service: ChatServiceDep
+    user_id: UserId, request: Request, service: ChatServiceDep
 ) -> Envelope[ChatHistory]:
     return Envelope[ChatHistory](data=await service.history(user_id), meta=build_meta(request))
 
 
 @router.get("/{user_id}/evals", response_model=Envelope[EvalSummary])
 async def evals(
-    user_id: str, request: Request, service: ChatServiceDep
+    user_id: UserId, request: Request, service: ChatServiceDep
 ) -> Envelope[EvalSummary]:
     return Envelope[EvalSummary](
         data=await service.evals_summary(user_id), meta=build_meta(request)
@@ -42,6 +47,6 @@ async def evals(
 
 @router.delete("/{user_id}/memory", response_model=Envelope[MemoryWipeResult])
 async def wipe_memory(
-    user_id: str, request: Request, service: ChatServiceDep
+    user_id: UserId, request: Request, service: ChatServiceDep
 ) -> Envelope[MemoryWipeResult]:
     return Envelope[MemoryWipeResult](data=await service.wipe(user_id), meta=build_meta(request))

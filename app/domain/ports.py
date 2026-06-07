@@ -21,7 +21,7 @@ from app.domain.types import (
     Turn,
 )
 from app.models.catalog import Plan
-from app.models.eval import EvalBlock
+from app.models.eval import EvalBlock, EvalResult
 
 
 class MemoryPort(Protocol):
@@ -84,7 +84,7 @@ class EvaluatorPort(Protocol):
 
     async def evaluate(
         self, *, user_message: str, context: str, draft_answer: str
-    ) -> EvalBlock: ...
+    ) -> EvalResult: ...
 
 
 class ReviewLogPort(Protocol):

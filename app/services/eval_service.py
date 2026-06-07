@@ -11,7 +11,7 @@ from typing import Any
 from app.agents.prompts import EVAL_SYSTEM
 from app.domain.ports import LLMPort
 from app.domain.types import ConvMessage, TextPart, ToolSpec, ToolUsePart
-from app.models.eval import EvalBlock
+from app.models.eval import EvalBlock, EvalResult
 
 _EVAL_TOOL = ToolSpec(
     name="submit_evaluation",
@@ -55,7 +55,7 @@ class LLMEvaluator:
         self._max_tokens = max_tokens
         self._flag_threshold = flag_threshold
 
-    async def evaluate(self, *, user_message: str, context: str, draft_answer: str) -> EvalBlock:
+    async def evaluate(self, *, user_message: str, context: str, draft_answer: str) -> EvalResult:
         prompt = (
             "Evaluate the assistant's draft answer.\n\n"
             f"User question:\n{user_message}\n\n"
@@ -74,20 +74,32 @@ class LLMEvaluator:
             force_tool=_EVAL_TOOL.name,
         )
         args = self._extract(reply.message.parts)
+        if args is None:
+            # No structured output — fail safe by flagging, but mark it un-evaluated so the
+            # placeholder zeros are kept out of the persisted /evals aggregates.
+            degraded = EvalBlock(
+                groundedness=0.0,
+                relevance=0.0,
+                confidence=0.0,
+                flagged=True,
+                reasoning="Evaluator did not return a structured score; flagged for review.",
+            )
+            return EvalResult(block=degraded, evaluated=False)
+
         confidence = _clamp(args.get("confidence"))
         # Authoritative: the threshold decides flagging, regardless of what the model says.
-        return EvalBlock(
+        block = EvalBlock(
             groundedness=_clamp(args.get("groundedness")),
             relevance=_clamp(args.get("relevance")),
             confidence=confidence,
             flagged=confidence < self._flag_threshold,
             reasoning=str(args.get("reasoning") or "No reasoning returned."),
         )
+        return EvalResult(block=block, evaluated=True)
 
     @staticmethod
-    def _extract(parts: list[Any]) -> dict[str, Any]:
+    def _extract(parts: list[Any]) -> dict[str, Any] | None:
         for part in parts:
             if isinstance(part, ToolUsePart) and part.name == _EVAL_TOOL.name:
                 return part.arguments
-        # The evaluator failed to return structured output — fail safe by flagging.
-        return {"reasoning": "Evaluator did not return a structured score; flagged for review."}
+        return None

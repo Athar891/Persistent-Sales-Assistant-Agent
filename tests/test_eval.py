@@ -20,8 +20,10 @@ async def test_high_confidence_is_not_flagged_and_forces_the_eval_tool() -> None
         [_eval_reply(groundedness=0.95, relevance=0.9, confidence=0.85, reasoning="grounded")]
     )
     evaluator = LLMEvaluator(llm, model="m", max_tokens=256, flag_threshold=0.7)
-    block = await evaluator.evaluate(user_message="q", context="ctx", draft_answer="a")
+    result = await evaluator.evaluate(user_message="q", context="ctx", draft_answer="a")
+    block = result.block
 
+    assert result.evaluated is True
     assert block.flagged is False
     assert block.confidence == 0.85
     assert block.reasoning == "grounded"
@@ -33,7 +35,7 @@ async def test_low_confidence_is_flagged() -> None:
         [_eval_reply(groundedness=0.4, relevance=0.5, confidence=0.5, reasoning="weak")]
     )
     evaluator = LLMEvaluator(llm, model="m", max_tokens=256, flag_threshold=0.7)
-    block = await evaluator.evaluate(user_message="q", context="", draft_answer="a")
+    block = (await evaluator.evaluate(user_message="q", context="", draft_answer="a")).block
     assert block.flagged is True
 
 
@@ -42,20 +44,21 @@ async def test_threshold_boundary_is_not_flagged() -> None:
         [_eval_reply(groundedness=0.7, relevance=0.7, confidence=0.7, reasoning="ok")]
     )
     evaluator = LLMEvaluator(llm, model="m", max_tokens=256, flag_threshold=0.7)
-    block = await evaluator.evaluate(user_message="q", context="c", draft_answer="a")
+    block = (await evaluator.evaluate(user_message="q", context="c", draft_answer="a")).block
     assert block.flagged is False  # confidence < threshold is strict; 0.7 < 0.7 is False
 
 
 async def test_out_of_range_scores_are_clamped() -> None:
     llm = ScriptedLLM([_eval_reply(groundedness=1.5, relevance=-0.2, confidence=2, reasoning="x")])
     evaluator = LLMEvaluator(llm, model="m", max_tokens=256, flag_threshold=0.7)
-    block = await evaluator.evaluate(user_message="q", context="c", draft_answer="a")
+    block = (await evaluator.evaluate(user_message="q", context="c", draft_answer="a")).block
     assert (block.groundedness, block.relevance, block.confidence) == (1.0, 0.0, 1.0)
 
 
 async def test_missing_structured_output_fails_safe_to_flagged() -> None:
     llm = ScriptedLLM([final_text("looks fine to me")])  # model didn't call the tool
     evaluator = LLMEvaluator(llm, model="m", max_tokens=256, flag_threshold=0.7)
-    block = await evaluator.evaluate(user_message="q", context="c", draft_answer="a")
-    assert block.flagged is True
-    assert block.confidence == 0.0
+    result = await evaluator.evaluate(user_message="q", context="c", draft_answer="a")
+    assert result.evaluated is False
+    assert result.block.flagged is True
+    assert result.block.confidence == 0.0

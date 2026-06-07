@@ -1,5 +1,7 @@
 """Self-evaluation schema — present on every /chat response and persisted."""
 
+from dataclasses import dataclass
+
 from pydantic import BaseModel, Field
 
 
@@ -11,6 +13,18 @@ class EvalBlock(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     flagged: bool
     reasoning: str
+
+
+@dataclass(frozen=True)
+class EvalResult:
+    """An evaluation plus whether it was a genuine structured measurement.
+
+    A degraded result — the evaluator returned no structured score — is surfaced for human
+    review but not persisted, so its placeholder zeros never drag down the /evals averages.
+    """
+
+    block: EvalBlock
+    evaluated: bool
 
 
 class EvalSummary(BaseModel):

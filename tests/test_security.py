@@ -11,14 +11,16 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from starlette.requests import Request
 
 from app.api.deps import get_settings_dep
+from app.api.middleware import _logged_path, _user_hash
 from app.api.rate_limit import RateLimiter
 from app.catalog.keyword_search import KeywordCatalogSearch
 from app.db.session import Database
 from app.main import create_app
 from app.reviews.notifier import NullNotifier
-from app.settings import Settings, validate_runtime_config
+from app.settings import Settings, get_settings, validate_runtime_config
 from tests.support import StubLLM
 
 CATALOG = str(Path(__file__).resolve().parents[1] / "catalog.json")
@@ -80,6 +82,62 @@ async def test_oversized_message_is_rejected(secured_client: AsyncClient) -> Non
         "/chat/acme", json={"message": "x" * 9000}, headers={"X-API-Key": "secret"}
     )
     assert r.status_code == 422
+
+
+async def test_oversized_user_id_is_rejected(secured_client: AsyncClient) -> None:
+    big = "u" * 256  # exceeds the 255-char path bound (the DB column width)
+    r = await secured_client.post(
+        f"/chat/{big}", json={"message": "hi"}, headers={"X-API-Key": "secret"}
+    )
+    assert r.status_code == 422
+
+
+async def test_cors_preflight_allows_a_configured_origin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://widget.example.com")
+    get_settings.cache_clear()
+    try:
+        transport = ASGITransport(app=create_app())
+        async with AsyncClient(transport=transport, base_url="http://t") as client:
+            r = await client.options(
+                "/chat/x",
+                headers={
+                    "Origin": "https://widget.example.com",
+                    "Access-Control-Request-Method": "POST",
+                },
+            )
+        assert r.headers.get("access-control-allow-origin") == "https://widget.example.com"
+    finally:
+        get_settings.cache_clear()  # don't leak the patched settings to other tests
+
+
+class _FakeRoute:
+    path = "/chat/{user_id}/history"
+
+
+def test_logs_use_route_template_and_hash_not_raw_user_id() -> None:
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/chat/secret-user/history",
+            "headers": [],
+            "query_string": b"",
+            "route": _FakeRoute(),
+            "path_params": {"user_id": "secret-user"},
+        }
+    )
+    assert _logged_path(request) == "/chat/{user_id}/history"  # template, never the raw id
+    digest = _user_hash(request)
+    assert digest is not None
+    assert "secret-user" not in digest
+    assert len(digest) == 12
+
+
+def test_user_hash_is_none_without_a_user_id() -> None:
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/health", "headers": [], "query_string": b""}
+    )
+    assert _user_hash(request) is None
 
 
 def test_rate_limiter_allows_then_blocks_then_recovers() -> None:

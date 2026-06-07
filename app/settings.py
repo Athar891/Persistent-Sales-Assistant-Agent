@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     api_key: str | None = None
     # Requests per minute per caller (keyed by API key, else client IP). 0 disables.
     rate_limit_per_minute: int = 60
+    # Comma-separated browser origins allowed to call the API (e.g. a chat-widget host).
+    # Empty = no CORS headers (server-to-server only, the default).
+    cors_allow_origins: str = ""
 
     # --- persistence ---
     # Local default is file-backed SQLite; Railway injects a Postgres DATABASE_URL.
@@ -65,6 +68,10 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.strip().lower() == "production"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
 
 
 def validate_runtime_config(settings: Settings) -> None:

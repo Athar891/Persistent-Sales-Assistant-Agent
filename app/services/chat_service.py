@@ -94,11 +94,12 @@ class ChatService:
         outcome = await agent.run(system=AGENT_SYSTEM, user_message=message)
 
         # 3. Evaluate the draft against the grounding the tools returned (no DB).
-        evaluation = await self._evaluator.evaluate(
+        result = await self._evaluator.evaluate(
             user_message=message, context=outcome.context, draft_answer=outcome.answer
         )
+        evaluation = result.block
 
-        # 4. Persist the assistant turn and its eval together (one short transaction).
+        # 4. Persist the assistant turn and (only a genuine) eval together (one short tx).
         async with self._uow.begin() as repos:
             assistant_turn = await repos.memory.append_message(
                 user_id=user_id,
@@ -109,15 +110,22 @@ class ChatService:
             )
             if assistant_turn.seq is None:  # defensive: flush always assigns an id
                 raise AgentError("Failed to persist the assistant turn.")
-            await repos.evals.record(
-                message_id=assistant_turn.seq,
-                user_id=user_id,
-                session_id=session_id,
-                evaluation=evaluation,
-            )
+            if result.evaluated:  # a degraded eval is escalated below, not persisted or averaged
+                await repos.evals.record(
+                    message_id=assistant_turn.seq,
+                    user_id=user_id,
+                    session_id=session_id,
+                    evaluation=evaluation,
+                )
 
-        # 5. Authoritative escalation: the threshold decides, then flag_for_human fires.
-        if evaluation.flagged:
+        # 5. Escalate: a failed evaluation always needs a human; otherwise the threshold decides.
+        if not result.evaluated:
+            await flag.escalate(
+                reason="Evaluator returned no structured score; needs human review.",
+                evaluation=evaluation,
+                message_id=assistant_turn.seq,
+            )
+        elif evaluation.flagged:
             await flag.escalate(
                 reason=(
                     f"Low confidence: {evaluation.confidence:.2f} "

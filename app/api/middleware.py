@@ -34,6 +34,19 @@ def _client_key(request: Request) -> str:
     return f"ip:{client.host}" if client else "ip:unknown"
 
 
+def _logged_path(request: Request) -> str:
+    """The matched route template (e.g. /chat/{user_id}), so a user_id — which may be a
+    phone number or email — never lands in the logs. Falls back to the raw path pre-routing."""
+    route = request.scope.get("route")
+    return getattr(route, "path", None) or request.url.path
+
+
+def _user_hash(request: Request) -> str | None:
+    """A stable, non-reversible digest of the path's user_id, for correlating logs without PII."""
+    user_id = (request.scope.get("path_params") or {}).get("user_id")
+    return hashlib.sha256(str(user_id).encode()).hexdigest()[:12] if user_id else None
+
+
 def _too_many_requests(request: Request, retry_after: float) -> JSONResponse:
     retry = max(1, int(retry_after) + 1)  # whole seconds, at least 1
     body = ProblemDetails(
@@ -87,11 +100,13 @@ async def _request_context(
     fields = {
         "event": "request",
         "method": request.method,
-        "path": request.url.path,
+        "path": _logged_path(request),
         "status": response.status_code,
         "request_id": request.state.request_id,
         "latency_ms": latency_ms,
     }
+    if user_hash := _user_hash(request):
+        fields["user_hash"] = user_hash
     fields.update(getattr(request.state, "log_fields", {}))
     logger.info("request", extra={"json_fields": fields})
     return response
