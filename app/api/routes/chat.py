@@ -1,14 +1,15 @@
 """Chat endpoints. Handlers stay dumb: parse, delegate to ChatService, serialize."""
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from app.api.deps import ChatServiceDep
 from app.api.responses import build_meta
+from app.api.security import require_api_key
 from app.models.chat import ChatData, ChatHistory, ChatRequest, MemoryWipeResult
 from app.models.envelope import Envelope
 from app.models.eval import EvalSummary
 
-router = APIRouter(prefix="/chat", tags=["chat"])
+router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(require_api_key)])
 
 
 @router.post("/{user_id}", response_model=Envelope[ChatData])

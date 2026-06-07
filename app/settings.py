@@ -21,6 +21,16 @@ class Settings(BaseSettings):
     # --- service metadata ---
     app_name: str = "persistent-sales-agent"
     version: str = "0.1.0"
+    # "development" locally; set ENVIRONMENT=production on the host to turn the insecure
+    # local defaults (open API, SQLite) into hard boot-time errors — see validate_runtime_config.
+    environment: str = "development"
+
+    # --- security ---
+    # Shared secret gating /chat and /reviews. Empty locally → auth disabled (convenient for
+    # dev/tests); REQUIRED in production (validate_runtime_config refuses to boot without it).
+    api_key: str | None = None
+    # Requests per minute per caller (keyed by API key, else client IP). 0 disables.
+    rate_limit_per_minute: int = 60
 
     # --- persistence ---
     # Local default is file-backed SQLite; Railway injects a Postgres DATABASE_URL.
@@ -51,6 +61,37 @@ class Settings(BaseSettings):
 
     # --- logging ---
     log_level: str = "INFO"
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.strip().lower() == "production"
+
+
+def validate_runtime_config(settings: Settings) -> None:
+    """Fail loud on insecure production configuration.
+
+    The local defaults (no API key, SQLite) are deliberately convenient for dev — but each
+    is a footgun in production: an open API with no key drains the LLM budget and leaks every
+    user's history, and SQLite on an ephemeral container filesystem silently loses all
+    'persistent' memory on the next redeploy. Rather than let those defaults reach production
+    unnoticed, we refuse to start. Called once from create_app().
+    """
+    if not settings.is_production:
+        return
+    problems: list[str] = []
+    if not settings.api_key:
+        problems.append(
+            "API_KEY must be set in production — without it /chat and /reviews are unauthenticated."
+        )
+    if settings.database_url.startswith("sqlite"):
+        problems.append(
+            "DATABASE_URL must be Postgres in production — SQLite is ephemeral on Railway and "
+            "loses all stored memory on every redeploy."
+        )
+    if problems:
+        raise RuntimeError(
+            "Refusing to start with insecure production config:\n- " + "\n- ".join(problems)
+        )
 
 
 @lru_cache
