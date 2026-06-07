@@ -7,6 +7,8 @@ these protocols. That single rule is what makes the storage and LLM backends
 swappable in one file.
 """
 
+from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from typing import Protocol
 
 from app.domain.types import (
@@ -19,7 +21,7 @@ from app.domain.types import (
     Turn,
 )
 from app.models.catalog import Plan
-from app.models.eval import EvalBlock
+from app.models.eval import EvalBlock, EvalResult
 
 
 class MemoryPort(Protocol):
@@ -82,7 +84,7 @@ class EvaluatorPort(Protocol):
 
     async def evaluate(
         self, *, user_message: str, context: str, draft_answer: str
-    ) -> EvalBlock: ...
+    ) -> EvalResult: ...
 
 
 class ReviewLogPort(Protocol):
@@ -120,3 +122,24 @@ class NotifierPort(Protocol):
     async def notify(
         self, *, user_id: str, session_id: str, reason: str, evaluation: EvalBlock | None = None
     ) -> None: ...
+
+
+@dataclass(frozen=True)
+class Repositories:
+    """The SQL-backed ports bound to one short-lived transaction (see ``UnitOfWork``)."""
+
+    memory: MemoryPort
+    evals: EvalStorePort
+    reviews: ReviewLogPort
+
+
+class UnitOfWork(Protocol):
+    """Opens a short transaction that exposes the repositories.
+
+    Each ``begin()`` block is one commit/rollback scope, and it releases its pooled DB
+    connection the moment the block exits — so no connection is held while the agent or
+    evaluator awaits the LLM. A /chat turn is a *sequence* of these short transactions,
+    never one long transaction spanning every model round-trip.
+    """
+
+    def begin(self) -> AbstractAsyncContextManager[Repositories]: ...

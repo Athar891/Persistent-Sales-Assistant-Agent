@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.security import require_api_key
 from app.catalog.keyword_search import KeywordCatalogSearch
 from app.db.session import Database
 from app.main import create_app
@@ -31,6 +32,9 @@ async def harness(tmp_path: Path) -> AsyncIterator[Harness]:
     app.state.llm = llm
     app.state.notifier = NullNotifier()
     app.state.started_at = time.time()
+    # These full-stack tests exercise behaviour, not auth — run them keyless.
+    # Auth and rate limiting are covered directly in tests/test_security.py.
+    app.dependency_overrides[require_api_key] = lambda: None
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:

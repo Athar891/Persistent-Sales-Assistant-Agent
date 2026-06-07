@@ -8,7 +8,9 @@ from app.models.eval import EvalBlock
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=1)
+    # max_length caps abuse: each message is stored and sent to the LLM as tokens, so an
+    # unbounded body is a cost/DoS vector. 8000 chars is generous for a sales question.
+    message: str = Field(min_length=1, max_length=8000)
     # Optional: supply to continue a session. Omitted → the server mints a new one.
     # Cross-session memory always keys on the path's user_id, never on session_id.
     session_id: str | None = None

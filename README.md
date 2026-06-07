@@ -31,9 +31,31 @@ Hook the AI into your support inbox. When a customer emails a question about upg
 
 You can test the agent's cross-session memory right now using the live API. These two terminal commands prove the agent remembers context across entirely different sessions without relying on the request body.
 
+> **🔐 You need an API key.** The `/chat` and `/reviews` endpoints are protected — every
+> request must send an `X-API-Key` header. `/health` and `/catalog` stay open. Ask the
+> maintainer for a key, then substitute it below.
+
+### Method 1: The Interactive Web UI (Easiest!)
+1. Go to **[https://sales-agent-production-c77f.up.railway.app/docs](https://sales-agent-production-c77f.up.railway.app/docs)** in your browser.
+2. Click the **"Authorize"** button (top right), paste your API key, and confirm.
+3. Click the green `POST /chat/{user_id}` button to expand it.
+4. Click the **"Try it out"** button on the right.
+5. Put your name in the `user_id` box.
+6. In the Request Body, enter `{"message": "What is the Enterprise plan?"}` and click the big blue **Execute** button.
+7. Scroll down to see the response. Then, change the message to `{"message": "How much does it cost?"}` and click **Execute** again. Notice how it remembers you are talking about the Enterprise plan!
+
+### Method 2: Command Line (For Developers)
+
+If you prefer the terminal, you can prove the agent's memory works across separate requests using `curl`. First put your key in a variable so it's not repeated:
+
+```bash
+export API_KEY="paste-your-key-here"
+```
+
 **Step 1: Session A — Establish Context**
 ```bash
 curl -s -X POST "https://sales-agent-production-c77f.up.railway.app/chat/acme-corp" \
+  -H "X-API-Key: $API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"message":"What does your Enterprise plan cost?"}' | jq
 ```
@@ -42,6 +64,7 @@ curl -s -X POST "https://sales-agent-production-c77f.up.railway.app/chat/acme-co
 *Notice we do not mention the word "Enterprise" here!*
 ```bash
 curl -s -X POST "https://sales-agent-production-c77f.up.railway.app/chat/acme-corp" \
+  -H "X-API-Key: $API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"message":"Does that plan include SSO?"}' | jq
 ```
@@ -52,6 +75,11 @@ curl -s -X POST "https://sales-agent-production-c77f.up.railway.app/chat/acme-co
 ## 🧠 Architecture & Technical Deep Dive
 
 For developers and reviewers, here is how the agent works under the hood.
+
+1. **Real Tool Use:** The AI doesn't just guess or hallucinate answers. When you ask a question, it uses a digital tool to search an official product catalog. If the answer isn't in the catalog, it won't make one up.
+2. **Persistent Memory:** Chat histories are saved in a powerful PostgreSQL database in the cloud. We don't rely on the browser to remember things.
+3. **Quality Control (Self-Evaluation):** Before the AI sends an answer back to the user, a separate internal AI reads the answer and grades it. If the answer seems wrong, confusing, or low-quality, the system automatically flags it for a human to review later!
+4. **Access Control:** The data and chat endpoints sit behind an API key, requests are rate-limited per caller, and message size is bounded — so a stranger can't read another user's history, drain the LLM budget, or flood the service.
 
 ### Architecture Request Flow
 
@@ -102,7 +130,8 @@ The eval block is **earned, not random**. A dedicated `EvaluatorPort` makes a se
 # 1. Install dependencies
 uv sync                              
 
-# 2. Add your Anthropic API Key
+# 2. Create your .env and add your Anthropic API key.
+#    Locally you can leave API_KEY blank — auth is disabled when it's unset.
 cp .env.example .env                 
 
 # 3. Setup the local SQLite database
@@ -112,3 +141,18 @@ uv run alembic upgrade head
 uv run uvicorn app.main:app --reload 
 # The app will be running at http://127.0.0.1:8000
 ```
+
+### Deploying to production
+Set these environment variables on your host (e.g. Railway):
+
+| Variable | Why |
+|---|---|
+| `ENVIRONMENT=production` | Turns the unsafe local defaults into hard boot-time errors. |
+| `API_KEY=<a long random secret>` | Required in production — gates `/chat` and `/reviews`. |
+| `DATABASE_URL=postgresql://…` | Required in production — Railway's Postgres plugin injects this. SQLite is ephemeral and would lose all memory on redeploy. |
+| `ANTHROPIC_API_KEY=<your key>` | So the agent can reach Claude. |
+| `CORS_ALLOW_ORIGINS=` | Optional. Comma-separated browser origins (e.g. a chat-widget host). Leave empty for server-to-server only. |
+
+With `ENVIRONMENT=production` set, the app **refuses to boot** if `API_KEY` is missing or `DATABASE_URL` still points at SQLite — so an insecure config fails loudly instead of silently.
+
+> **Scaling note:** migrations run on boot (`start.sh`), which assumes a **single instance**. Before scaling past one replica, move `alembic upgrade head` to a one-off release step so concurrent boots don't race on it.

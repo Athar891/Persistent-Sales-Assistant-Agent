@@ -12,9 +12,8 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import Database
-from app.domain.ports import CatalogPort, LLMPort, NotifierPort, ReviewLogPort
-from app.evals.sql_eval_store import SqlEvalStore
-from app.memory.sql_store import SqlMemoryStore
+from app.db.unit_of_work import SqlUnitOfWork
+from app.domain.ports import CatalogPort, LLMPort, NotifierPort, ReviewLogPort, UnitOfWork
 from app.reviews.sql_review_log import SqlReviewLog
 from app.services.chat_service import ChatService
 from app.services.eval_service import LLMEvaluator
@@ -61,6 +60,14 @@ LLMDep = Annotated[LLMPort, Depends(get_llm)]
 NotifierDep = Annotated[NotifierPort, Depends(get_notifier)]
 
 
+def get_uow(db: DbDep) -> UnitOfWork:
+    """A factory of short-lived transactions. /chat opens several, never one long one."""
+    return SqlUnitOfWork(db.sessionmaker)
+
+
+UowDep = Annotated[UnitOfWork, Depends(get_uow)]
+
+
 def get_review_log(session: SessionDep) -> ReviewLogPort:
     return SqlReviewLog(session)
 
@@ -69,7 +76,7 @@ ReviewLogDep = Annotated[ReviewLogPort, Depends(get_review_log)]
 
 
 def get_chat_service(
-    session: SessionDep,
+    uow: UowDep,
     catalog: CatalogDep,
     llm: LLMDep,
     notifier: NotifierDep,
@@ -82,12 +89,10 @@ def get_chat_service(
         flag_threshold=settings.flag_confidence_threshold,
     )
     return ChatService(
-        memory=SqlMemoryStore(session),
+        uow=uow,
         catalog=catalog,
         llm=llm,
         evaluator=evaluator,
-        evals=SqlEvalStore(session),
-        reviews=SqlReviewLog(session),
         notifier=notifier,
         settings=settings,
     )

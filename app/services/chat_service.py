@@ -2,8 +2,11 @@
 
 Depends only on ports, never on concrete adapters. The flow:
 persist user turn → run the agent (tools) → evaluate the draft → persist assistant turn +
-eval → escalate if flagged → return the brief's response/eval/tools_called/session_id shape.
-The request's DB session commits once, at the end, so the whole turn is atomic.
+eval → escalate if flagged → summarize. Each DB step runs in its own short transaction via
+the UnitOfWork, so no database connection is held while the agent or evaluator waits on the
+LLM — the long pole of a turn. The trade-off is deliberate: the turn is no longer one atomic
+transaction. The user message is durably recorded before generation, and the assistant turn
++ its eval commit together afterwards.
 """
 
 from uuid import uuid4
@@ -14,12 +17,10 @@ from app.agents.tool_registry import ToolRegistry
 from app.domain.errors import AgentError
 from app.domain.ports import (
     CatalogPort,
-    EvalStorePort,
     EvaluatorPort,
     LLMPort,
-    MemoryPort,
     NotifierPort,
-    ReviewLogPort,
+    UnitOfWork,
 )
 from app.logging_config import get_logger
 from app.memory.summarizer import Summarizer
@@ -37,21 +38,17 @@ class ChatService:
     def __init__(
         self,
         *,
-        memory: MemoryPort,
+        uow: UnitOfWork,
         catalog: CatalogPort,
         llm: LLMPort,
         evaluator: EvaluatorPort,
-        evals: EvalStorePort,
-        reviews: ReviewLogPort,
         notifier: NotifierPort,
         settings: Settings,
     ) -> None:
-        self._memory = memory
+        self._uow = uow
         self._catalog = catalog
         self._llm = llm
         self._evaluator = evaluator
-        self._evals = evals
-        self._reviews = reviews
         self._notifier = notifier
         self._settings = settings
         self._summarizer = Summarizer(
@@ -65,19 +62,23 @@ class ChatService:
     async def handle(self, *, user_id: str, message: str, session_id: str | None) -> ChatData:
         session_id = session_id or str(uuid4())
 
-        # 1. Persist the incoming user turn (so cross-session memory survives this request).
-        await self._memory.append_message(
-            user_id=user_id, session_id=session_id, role="user", content=message
-        )
+        # 1. Persist the incoming user turn in its own short transaction, so the connection
+        #    is back in the pool before the (slow) agent run begins.
+        async with self._uow.begin() as repos:
+            await repos.memory.append_message(
+                user_id=user_id, session_id=session_id, role="user", content=message
+            )
 
-        # 2. Assemble per-request tools (user_id/session_id bound server-side) and run the agent.
+        # 2. Run the agent. Its DB-backed tools (get_user_memory reads, flag_for_human writes)
+        #    each open their own short transaction, so the loop holds no connection between
+        #    model round-trips. user_id/session_id are bound server-side, never by the model.
         flag = FlagForHumanTool(
-            self._reviews, self._notifier, user_id=user_id, session_id=session_id
+            self._uow, self._notifier, user_id=user_id, session_id=session_id
         )
         registry = ToolRegistry(
             [
                 GetUserMemoryTool(
-                    self._memory, user_id, recent_window=self._settings.recent_turns_window
+                    self._uow, user_id, recent_window=self._settings.recent_turns_window
                 ),
                 SearchCatalogTool(self._catalog),
                 flag,
@@ -92,30 +93,39 @@ class ChatService:
         )
         outcome = await agent.run(system=AGENT_SYSTEM, user_message=message)
 
-        # 3. Evaluate the draft against the grounding the tools returned.
-        evaluation = await self._evaluator.evaluate(
+        # 3. Evaluate the draft against the grounding the tools returned (no DB).
+        result = await self._evaluator.evaluate(
             user_message=message, context=outcome.context, draft_answer=outcome.answer
         )
+        evaluation = result.block
 
-        # 4. Persist the assistant turn and its eval (linked by message id).
-        assistant_turn = await self._memory.append_message(
-            user_id=user_id,
-            session_id=session_id,
-            role="assistant",
-            content=outcome.answer,
-            tools_called=outcome.tools_called,
-        )
-        if assistant_turn.seq is None:  # defensive: flush always assigns an id
-            raise AgentError("Failed to persist the assistant turn.")
-        await self._evals.record(
-            message_id=assistant_turn.seq,
-            user_id=user_id,
-            session_id=session_id,
-            evaluation=evaluation,
-        )
+        # 4. Persist the assistant turn and (only a genuine) eval together (one short tx).
+        async with self._uow.begin() as repos:
+            assistant_turn = await repos.memory.append_message(
+                user_id=user_id,
+                session_id=session_id,
+                role="assistant",
+                content=outcome.answer,
+                tools_called=outcome.tools_called,
+            )
+            if assistant_turn.seq is None:  # defensive: flush always assigns an id
+                raise AgentError("Failed to persist the assistant turn.")
+            if result.evaluated:  # a degraded eval is escalated below, not persisted or averaged
+                await repos.evals.record(
+                    message_id=assistant_turn.seq,
+                    user_id=user_id,
+                    session_id=session_id,
+                    evaluation=evaluation,
+                )
 
-        # 5. Authoritative escalation: the threshold decides, then flag_for_human fires.
-        if evaluation.flagged:
+        # 5. Escalate: a failed evaluation always needs a human; otherwise the threshold decides.
+        if not result.evaluated:
+            await flag.escalate(
+                reason="Evaluator returned no structured score; needs human review.",
+                evaluation=evaluation,
+                message_id=assistant_turn.seq,
+            )
+        elif evaluation.flagged:
             await flag.escalate(
                 reason=(
                     f"Low confidence: {evaluation.confidence:.2f} "
@@ -137,14 +147,15 @@ class ChatService:
 
     async def _maybe_summarize(self, user_id: str) -> None:
         try:
-            await self._summarizer.run(self._memory, user_id)
+            await self._summarizer.run(self._uow, user_id)
         except Exception:  # best-effort: a summary failure must not fail the turn
             logger.warning("summarization_failed", extra={"json_fields": {"user_id": user_id}})
 
     async def evals_summary(self, user_id: str) -> EvalSummary:
-        agg = await self._evals.aggregate(
-            user_id, high_confidence_threshold=self._settings.flag_confidence_threshold
-        )
+        async with self._uow.begin() as repos:
+            agg = await repos.evals.aggregate(
+                user_id, high_confidence_threshold=self._settings.flag_confidence_threshold
+            )
         return EvalSummary(
             user_id=user_id,
             total_responses=agg.total,
@@ -157,7 +168,8 @@ class ChatService:
         )
 
     async def history(self, user_id: str) -> ChatHistory:
-        turns = await self._memory.get_history(user_id)
+        async with self._uow.begin() as repos:
+            turns = await repos.memory.get_history(user_id)
         items = [
             HistoryTurn(
                 seq=t.seq,
@@ -173,5 +185,6 @@ class ChatService:
         return ChatHistory(user_id=user_id, count=len(items), turns=items)
 
     async def wipe(self, user_id: str) -> MemoryWipeResult:
-        deleted = await self._memory.wipe_user(user_id)
+        async with self._uow.begin() as repos:
+            deleted = await repos.memory.wipe_user(user_id)
         return MemoryWipeResult(user_id=user_id, deleted_rows=deleted)

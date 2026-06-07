@@ -5,15 +5,17 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import errors, middleware
+from app.api.rate_limit import RateLimiter
 from app.api.routes import catalog, chat, health, reviews
 from app.catalog.keyword_search import KeywordCatalogSearch
 from app.db.session import Database
 from app.llm.anthropic_client import AnthropicClient
 from app.logging_config import configure_logging
 from app.reviews.notifier import NullNotifier
-from app.settings import get_settings
+from app.settings import get_settings, validate_runtime_config
 
 
 @asynccontextmanager
@@ -25,6 +27,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.catalog = KeywordCatalogSearch.from_file(settings.catalog_path)
     app.state.llm = AnthropicClient(settings.anthropic_api_key)
     app.state.notifier = NullNotifier()
+    app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
     app.state.started_at = time.time()
     try:
         yield
@@ -35,9 +38,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
+    validate_runtime_config(settings)  # refuse to boot with insecure production config
     app = FastAPI(title=settings.app_name, version=settings.version, lifespan=lifespan)
     middleware.register(app)
     errors.register(app)
+    # Added last so CORS is the outermost layer: it answers browser preflight (OPTIONS)
+    # before rate limiting. Off by default; opt in by setting CORS_ALLOW_ORIGINS. Auth is
+    # header-based (X-API-Key), so credentials stay off.
+    if origins := settings.cors_origins_list:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            allow_headers=["X-API-Key", "Content-Type"],
+        )
     app.include_router(health.router)
     app.include_router(catalog.router)
     app.include_router(chat.router)
