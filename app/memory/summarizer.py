@@ -7,7 +7,7 @@ context bounded while preserving continuity.
 """
 
 from app.agents.prompts import SUMMARIZER_SYSTEM
-from app.domain.ports import LLMPort, MemoryPort
+from app.domain.ports import LLMPort, UnitOfWork
 from app.domain.types import ConvMessage, TextPart
 
 
@@ -27,16 +27,21 @@ class Summarizer:
         self._recent_window = recent_window
         self._summarize_after = summarize_after
 
-    async def run(self, memory: MemoryPort, user_id: str) -> bool:
-        """Fold old turns into the rolling summary. Returns True if it updated anything."""
-        total = await memory.count_turns(user_id)
-        if total <= self._summarize_after:
-            return False
+    async def run(self, uow: UnitOfWork, user_id: str) -> bool:
+        """Fold old turns into the rolling summary. Returns True if it updated anything.
 
-        history = await memory.get_history(user_id)
-        state = await memory.get_summary_state(user_id)
+        Reads in one short transaction, makes the (slow) summarization call holding *no*
+        connection, then writes in a second short transaction — so a summary failure can
+        never poison another transaction, and the LLM call never pins the pool.
+        """
+        async with uow.begin() as repos:
+            total = await repos.memory.count_turns(user_id)
+            if total <= self._summarize_after:
+                return False
+            history = await repos.memory.get_history(user_id)
+            state = await repos.memory.get_summary_state(user_id)
+
         up_to = state.up_to_seq if state else 0
-
         unfolded = [t for t in history if (t.seq or 0) > up_to]
         # Keep the most recent window verbatim; only fold what is older than it.
         if len(unfolded) <= self._recent_window:
@@ -65,5 +70,8 @@ class Summarizer:
         if not summary:
             return False
 
-        await memory.upsert_summary(user_id=user_id, summary=summary, up_to_seq=new_up_to)
+        async with uow.begin() as repos:
+            await repos.memory.upsert_summary(
+                user_id=user_id, summary=summary, up_to_seq=new_up_to
+            )
         return True

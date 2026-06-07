@@ -3,6 +3,7 @@
 import pytest
 
 from app.db.session import Database
+from app.db.unit_of_work import SqlUnitOfWork
 from app.models.eval import EvalBlock
 from app.reviews.notifier import NullNotifier
 from app.reviews.sql_review_log import SqlReviewLog
@@ -17,12 +18,13 @@ def db_url(tmp_path: object) -> str:
 async def test_model_initiated_flag_records_a_row_without_scores(db_url: str) -> None:
     db = Database(db_url)
     await db.create_all()
+    tool = FlagForHumanTool(
+        SqlUnitOfWork(db.sessionmaker), NullNotifier(), user_id="u", session_id="sess"
+    )
+    out = await tool.run({"reason": "asked about something off-catalog"})
+
     async with db.sessionmaker() as session:
-        reviews = SqlReviewLog(session)
-        tool = FlagForHumanTool(reviews, NullNotifier(), user_id="u", session_id="sess")
-        out = await tool.run({"reason": "asked about something off-catalog"})
-        await session.commit()
-        entries = await reviews.list_entries(user_id="u")
+        entries = await SqlReviewLog(session).list_entries(user_id="u")
     await db.dispose()
 
     assert "Escalated" in out
@@ -35,15 +37,16 @@ async def test_model_initiated_flag_records_a_row_without_scores(db_url: str) ->
 async def test_threshold_escalation_stores_the_eval_scores(db_url: str) -> None:
     db = Database(db_url)
     await db.create_all()
+    tool = FlagForHumanTool(
+        SqlUnitOfWork(db.sessionmaker), NullNotifier(), user_id="u", session_id="sess"
+    )
+    evaluation = EvalBlock(
+        groundedness=0.3, relevance=0.4, confidence=0.5, flagged=True, reasoning="weak"
+    )
+    await tool.escalate(reason="Low confidence", evaluation=evaluation, message_id=42)
+
     async with db.sessionmaker() as session:
-        reviews = SqlReviewLog(session)
-        tool = FlagForHumanTool(reviews, NullNotifier(), user_id="u", session_id="sess")
-        evaluation = EvalBlock(
-            groundedness=0.3, relevance=0.4, confidence=0.5, flagged=True, reasoning="weak"
-        )
-        await tool.escalate(reason="Low confidence", evaluation=evaluation, message_id=42)
-        await session.commit()
-        entries = await reviews.list_entries()
+        entries = await SqlReviewLog(session).list_entries()
     await db.dispose()
 
     assert entries[0].confidence == 0.5

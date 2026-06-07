@@ -1,8 +1,14 @@
-"""Memory summarization (bonus): fold old turns, keep the recent window, advance up_to_seq."""
+"""Memory summarization (bonus): fold old turns, keep the recent window, advance up_to_seq.
+
+The summarizer now owns its transactions through a UnitOfWork (reads, then the LLM call
+holding no connection, then the write), so these tests hand it a UoW and read results back
+through a separate session.
+"""
 
 import pytest
 
 from app.db.session import Database
+from app.db.unit_of_work import SqlUnitOfWork
 from app.memory.sql_store import SqlMemoryStore
 from app.memory.summarizer import Summarizer
 from tests.support import ScriptedLLM, final_text
@@ -22,16 +28,17 @@ async def test_folds_old_turns_and_keeps_recent_window(db_url: str) -> None:
     db = Database(db_url)
     await db.create_all()
     async with db.sessionmaker() as session:
-        memory = SqlMemoryStore(session)
-        await _seed(memory, 6)
+        await _seed(SqlMemoryStore(session), 6)
         await session.commit()
-        summarizer = Summarizer(
-            ScriptedLLM([final_text("Summary: asked q0..q3")]),
-            model="m", max_tokens=128, recent_window=2, summarize_after=3,
-        )
-        changed = await summarizer.run(memory, "u")
-        await session.commit()
-        state = await memory.get_summary_state("u")
+
+    summarizer = Summarizer(
+        ScriptedLLM([final_text("Summary: asked q0..q3")]),
+        model="m", max_tokens=128, recent_window=2, summarize_after=3,
+    )
+    changed = await summarizer.run(SqlUnitOfWork(db.sessionmaker), "u")
+
+    async with db.sessionmaker() as session:
+        state = await SqlMemoryStore(session).get_summary_state("u")
     await db.dispose()
 
     assert changed is True
@@ -44,14 +51,14 @@ async def test_noop_below_threshold(db_url: str) -> None:
     db = Database(db_url)
     await db.create_all()
     async with db.sessionmaker() as session:
-        memory = SqlMemoryStore(session)
-        await _seed(memory, 2)
+        await _seed(SqlMemoryStore(session), 2)
         await session.commit()
-        summarizer = Summarizer(
-            ScriptedLLM([final_text("unused")]),
-            model="m", max_tokens=128, recent_window=2, summarize_after=3,
-        )
-        changed = await summarizer.run(memory, "u")
+
+    summarizer = Summarizer(
+        ScriptedLLM([final_text("unused")]),
+        model="m", max_tokens=128, recent_window=2, summarize_after=3,
+    )
+    changed = await summarizer.run(SqlUnitOfWork(db.sessionmaker), "u")
     await db.dispose()
     assert changed is False
 
@@ -59,22 +66,24 @@ async def test_noop_below_threshold(db_url: str) -> None:
 async def test_incremental_fold_advances_up_to_seq(db_url: str) -> None:
     db = Database(db_url)
     await db.create_all()
-    async with db.sessionmaker() as session:
-        memory = SqlMemoryStore(session)
-        await _seed(memory, 6)
-        await session.commit()
-        summarizer = Summarizer(
-            ScriptedLLM([final_text("s1"), final_text("s2")]),
-            model="m", max_tokens=128, recent_window=2, summarize_after=3,
-        )
-        await summarizer.run(memory, "u")
-        await session.commit()
+    uow = SqlUnitOfWork(db.sessionmaker)
+    summarizer = Summarizer(
+        ScriptedLLM([final_text("s1"), final_text("s2")]),
+        model="m", max_tokens=128, recent_window=2, summarize_after=3,
+    )
 
-        await _seed(memory, 4, start=6)  # now 10 turns total
+    async with db.sessionmaker() as session:
+        await _seed(SqlMemoryStore(session), 6)
         await session.commit()
-        await summarizer.run(memory, "u")
+    await summarizer.run(uow, "u")
+
+    async with db.sessionmaker() as session:
+        await _seed(SqlMemoryStore(session), 4, start=6)  # now 10 turns total
         await session.commit()
-        state = await memory.get_summary_state("u")
+    await summarizer.run(uow, "u")
+
+    async with db.sessionmaker() as session:
+        state = await SqlMemoryStore(session).get_summary_state("u")
     await db.dispose()
 
     assert state is not None

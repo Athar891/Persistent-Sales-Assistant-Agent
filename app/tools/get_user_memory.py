@@ -3,11 +3,14 @@
 The user_id is bound server-side (from the request path), not chosen by the model — the
 model never gets to ask for another user's memory. The tool surfaces the rolling summary
 plus the most recent verbatim turns, which is what "relevant past facts" means here.
+
+It reads through a short UnitOfWork transaction that opens and closes within the call, so
+the DB connection is not held across the model round-trips on either side of it.
 """
 
 from typing import Any
 
-from app.domain.ports import MemoryPort
+from app.domain.ports import UnitOfWork
 from app.domain.types import ToolSpec
 
 _INPUT_SCHEMA: dict[str, Any] = {
@@ -25,8 +28,8 @@ _INPUT_SCHEMA: dict[str, Any] = {
 class GetUserMemoryTool:
     name = "get_user_memory"
 
-    def __init__(self, memory: MemoryPort, user_id: str, *, recent_window: int) -> None:
-        self._memory = memory
+    def __init__(self, uow: UnitOfWork, user_id: str, *, recent_window: int) -> None:
+        self._uow = uow
         self._user_id = user_id
         self._recent_window = recent_window
 
@@ -43,8 +46,9 @@ class GetUserMemoryTool:
         )
 
     async def run(self, arguments: dict[str, Any]) -> str:
-        state = await self._memory.get_summary_state(self._user_id)
-        recent = await self._memory.get_recent_turns(self._user_id, self._recent_window)
+        async with self._uow.begin() as repos:
+            state = await repos.memory.get_summary_state(self._user_id)
+            recent = await repos.memory.get_recent_turns(self._user_id, self._recent_window)
 
         if state is None and not recent:
             return "No prior conversation found for this user."

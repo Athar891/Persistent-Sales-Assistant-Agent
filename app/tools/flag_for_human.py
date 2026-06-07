@@ -5,13 +5,13 @@ A single real callable with two invocation paths:
 - the chat service calls `escalate` deterministically after evaluation whenever
   confidence falls below the threshold (the authoritative trigger).
 
-Both paths write a human_review_log row via the ReviewLogPort and notify via the
-NotifierPort. user_id/session_id are bound server-side, never chosen by the model.
+Both paths write a human_review_log row in a short UnitOfWork transaction and notify via
+the NotifierPort. user_id/session_id are bound server-side, never chosen by the model.
 """
 
 from typing import Any
 
-from app.domain.ports import NotifierPort, ReviewLogPort
+from app.domain.ports import NotifierPort, UnitOfWork
 from app.domain.types import ToolSpec
 from app.models.eval import EvalBlock
 
@@ -21,13 +21,13 @@ class FlagForHumanTool:
 
     def __init__(
         self,
-        reviews: ReviewLogPort,
+        uow: UnitOfWork,
         notifier: NotifierPort,
         *,
         user_id: str,
         session_id: str,
     ) -> None:
-        self._reviews = reviews
+        self._uow = uow
         self._notifier = notifier
         self._user_id = user_id
         self._session_id = session_id
@@ -57,13 +57,15 @@ class FlagForHumanTool:
     async def escalate(
         self, *, reason: str, evaluation: EvalBlock | None = None, message_id: int | None = None
     ) -> None:
-        await self._reviews.record(
-            user_id=self._user_id,
-            session_id=self._session_id,
-            reason=reason,
-            evaluation=evaluation,
-            message_id=message_id,
-        )
+        async with self._uow.begin() as repos:
+            await repos.reviews.record(
+                user_id=self._user_id,
+                session_id=self._session_id,
+                reason=reason,
+                evaluation=evaluation,
+                message_id=message_id,
+            )
+        # Notify only after the row is durably committed.
         await self._notifier.notify(
             user_id=self._user_id,
             session_id=self._session_id,
